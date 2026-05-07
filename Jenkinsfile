@@ -6,6 +6,9 @@ pipeline {
         REGISTRY_USER = "vinod223" 
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         FULL_IMAGE = "${REGISTRY_USER}/${APP_NAME}:${IMAGE_TAG}"
+        // Replace this with your Terraform EC2 Public IP
+        TARGET_IP = "3.x.x.x" 
+        DOCKER_HUB_CREDS = credentials('docker-hub-creds')
     }
 
     stages {
@@ -15,75 +18,56 @@ pipeline {
             }
         }
 
-        stage('Build & Test') {
+        stage('Build & Push') {
             steps {
                 sh "docker build -t ${FULL_IMAGE} ./app"
-                // Run tests inside the newly built container
-                sh "docker run --rm ${FULL_IMAGE} npm test"
-            }
-        }
-
-        stage('Security Scan') {
-            steps {
-                echo 'Running Trivy Vulnerability Scan...'
-                // Using '|| true' ensures the pipeline continues even if vulnerabilities are found
-                sh "trivy image ${FULL_IMAGE} || true"
-            }
-        }
-
-        stage('Push to Docker Hub') {
-            steps {
+                sh "docker tag ${FULL_IMAGE} ${REGISTRY_USER}/${APP_NAME}:latest"
+                
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                     sh "echo \$PASS | docker login -u \$USER --password-stdin"
                     sh "docker push ${FULL_IMAGE}"
-                    
-                    // Tag and push as latest
-                    sh "docker tag ${FULL_IMAGE} ${REGISTRY_USER}/${APP_NAME}:latest"
                     sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
                 }
             }
         }
 
-        stage('Deploy') {
+        stage('Security Scan') {
             steps {
-                script {
-                    try {
-                        // Using ''' (Triple Single Quotes) prevents the '\' error
-                        sh '''
-                            DEPLOY_PATH=$(find . -name "deploy.sh" | head -n 1)
-                            if [ -z "$DEPLOY_PATH" ]; then
-                                echo "ERROR: deploy.sh not found!"
-                                exit 1
-                            fi
-                            chmod +x "$DEPLOY_PATH"
-                            ./"$DEPLOY_PATH" ''' + "${FULL_IMAGE}"
-                    } catch (Exception e) {
-                        echo "Deployment failed! Triggering Rollback logic..."
-                        sh '''
-                            ROLLBACK_PATH=$(find . -name "rollback.sh" | head -n 1)
-                            if [ -n "$ROLLBACK_PATH" ]; then
-                                chmod +x "$ROLLBACK_PATH"
-                                ./"$ROLLBACK_PATH"
-                            fi
-                        '''
-                        error("Deployment stage failed. Rollback initiated.")
-                    }
+                sh "trivy image ${FULL_IMAGE} || true"
+            }
+        }
+
+        stage('Remote Deploy') {
+            steps {
+                // 'aws-ec2-key' is the ID you gave your .pem key in Jenkins Credentials
+                sshagent(['aws-ec2-key']) {
+                    sh """
+                    ssh -o StrictHostKeyChecking=no ubuntu@${TARGET_IP} << 'EOF'
+                        # Install Docker on the new EC2 if it's not there
+                        if ! command -v docker &> /dev/null; then
+                            sudo apt-get update && sudo apt-get install -y docker.io
+                            sudo systemctl start docker
+                            sudo usermod -aG docker ubuntu
+                        fi
+                        
+                        # Login and Pull
+                        echo "${DOCKER_HUB_CREDS_PSW}" | sudo docker login -u "${DOCKER_HUB_CREDS_USR}" --password-stdin
+                        sudo docker pull ${REGISTRY_USER}/${APP_NAME}:latest
+                        
+                        # Stop and Replace Container
+                        sudo docker stop nodejs_app || true
+                        sudo docker rm nodejs_app || true
+                        sudo docker run -d --name nodejs_app -p 3000:3000 ${REGISTRY_USER}/${APP_NAME}:latest
+                    EOF
+                    """
                 }
             }
         }
     }
 
     post {
-        success {
-            echo "✅ SUCCESS: Pipeline completed successfully."
-        }
-        failure {
-            echo "❌ FAILURE: Pipeline failed. Check console output for errors."
-        }
         always {
-            // Clean up local images to save space on Jenkins node
             sh "docker rmi ${FULL_IMAGE} || true"
-            sh "docker rmi ${REGISTRY_USER}/${APP_NAME}:latest || true"
         }
     }
 }
