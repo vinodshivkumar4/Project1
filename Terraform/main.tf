@@ -1,7 +1,6 @@
-# Fetch the latest Ubuntu 22.04 AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"] # Canonical
+  owners      = ["099720109477"]
   filter {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
@@ -20,22 +19,18 @@ resource "tls_private_key" "node_app_key" {
 
 resource "aws_security_group" "node_app_sg" {
   name        = "nodejs-app-sg"
-  description = "Allow SSH and Node.js App Traffic"
-
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
   ingress {
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
   egress {
     from_port   = 0
     to_port     = 0
@@ -49,13 +44,6 @@ resource "aws_instance" "node_app_server" {
   instance_type          = var.instance_type
   key_name               = aws_key_pair.generated_key.key_name
   vpc_security_group_ids = [aws_security_group.node_app_sg.id]
-
-  # Make sure this script exists in your terraform/scripts/ directory
-  user_data = file("${path.module}/scripts/install_docker.sh")
-
-  tags = {
-    Name        = "nodejs-devops-server"
-    Application = "NodeJS-App"
-    ManagedBy   = "Terraform"
-  }
+  user_data              = file("${path.module}/script/install_docker.sh")
+  tags = { Name = "nodejs-devops-server" }
 }

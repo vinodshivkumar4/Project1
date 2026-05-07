@@ -9,14 +9,11 @@ pipeline {
 
     stages {
         stage('Clone Code') {
-            steps {
-                checkout scm
-            }
+            steps { checkout scm }
         }
 
         stage('Build') {
             steps {
-                echo "Building: ${FULL_IMAGE}"
                 sh "docker build -t ${FULL_IMAGE} ./app"
                 sh "docker tag ${FULL_IMAGE} ${APP_NAME}:latest"
             }
@@ -24,16 +21,14 @@ pipeline {
 
         stage('Test') {
             steps {
-                echo 'Running tests inside container...'
                 sh "docker run --rm ${FULL_IMAGE} npm test"
             }
         }
 
         stage('Security Scan') {
             steps {
-                echo 'Running Trivy scan...'
-                // Using the absolute path where we installed it on EC2
-                sh "/usr/local/bin/trivy image ${FULL_IMAGE} || true"
+                // Now that Trivy is in /usr/bin, this will work
+                sh "trivy image ${FULL_IMAGE} || true"
             }
         }
 
@@ -48,10 +43,16 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                echo "Deploying ${FULL_IMAGE}..."
-                // Ensuring we use the full workspace path to find the script folder
-                sh "chmod +x ${WORKSPACE}/script/deploy.sh"
-                sh "${WORKSPACE}/script/deploy.sh ${FULL_IMAGE}"
+                sh """
+                    # Finds deploy.sh regardless of if folder is named 'script' or 'scripts'
+                    SCRIPT_PATH=\$(find . -name "deploy.sh" | head -n 1)
+                    if [ -z "\$SCRIPT_PATH" ]; then
+                        echo "ERROR: deploy.sh not found"
+                        exit 1
+                    fi
+                    chmod +x "\$SCRIPT_PATH"
+                    bash "\$SCRIPT_PATH" ${FULL_IMAGE}
+                """
             }
         }
     }
@@ -61,7 +62,5 @@ pipeline {
             cleanWs()
             sh "docker rmi ${FULL_IMAGE} ${APP_NAME}:latest || true"
         }
-        success { echo "Deployment Successful!" }
-        failure { echo "Pipeline Failed. Check logs." }
     }
 }
