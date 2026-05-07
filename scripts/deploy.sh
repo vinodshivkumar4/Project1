@@ -1,15 +1,17 @@
 #!/bin/bash
+IMAGE=$1
+CONTAINER_NAME="nodejs_app"
 
-set -e
+echo "Deploying image: $IMAGE"
+docker stop $CONTAINER_NAME || true
+docker rm $CONTAINER_NAME || true
+docker run -d --name $CONTAINER_NAME -p 3000:3000 --restart unless-stopped $IMAGE
 
-echo "Deploying Node.js application..."
-
-docker compose down || true
-
-docker compose up -d --build
-
-sleep 20
-
-curl -f http://localhost:3000/health
-
-echo "Deployment successful."
+# Wait for health
+sleep 10
+if curl -f http://localhost:3000/health; then
+    echo "Deploy Success"
+else
+    echo "Deploy Failed"
+    exit 1
+fi
