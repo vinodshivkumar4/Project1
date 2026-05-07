@@ -7,7 +7,7 @@ pipeline {
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         FULL_IMAGE = "${env.REGISTRY_USER}/${env.APP_NAME}:${env.IMAGE_TAG}"
         // Replace the IP below with your ACTUAL EC2 Public IP from the AWS Console
-        TARGET_IP = "13.221.217.206" 
+        TARGET_IP = "54.162.22.160" 
         DOCKER_HUB_CREDS = credentials('docker-hub-creds')
     }
 
