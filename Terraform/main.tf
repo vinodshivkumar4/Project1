@@ -62,10 +62,13 @@ pipeline {
                         try {
                             echo "🚀 Deploying to ${env.EC2_PUBLIC_IP}"
                             
-                            // Note the use of ''' (triple single quotes) to avoid backslash errors
+                            // Use triple single quotes to avoid Groovy escaping issues
                             sh '''
                                 DEPLOY_PATH=$(find . -name "deploy.sh" | head -n 1)
-                                if [ -z "$DEPLOY_PATH" ]; then echo "deploy.sh not found"; exit 1; fi
+                                if [ -z "$DEPLOY_PATH" ]; then 
+                                    echo "Error: deploy.sh not found"
+                                    exit 1
+                                fi
                                 chmod +x "$DEPLOY_PATH"
                                 ./"$DEPLOY_PATH" ''' + "${env.EC2_PUBLIC_IP} ${FULL_IMAGE}"
                                 
@@ -76,7 +79,7 @@ pipeline {
                                 if [ -n "$ROLLBACK_PATH" ]; then
                                     chmod +x "$ROLLBACK_PATH"
                                     ./"$ROLLBACK_PATH" ''' + "${env.EC2_PUBLIC_IP}"
-                            error("Deployment failed.")
+                            error("Deployment stage failed.")
                         }
                     }
                 }
@@ -86,7 +89,7 @@ pipeline {
 
     post {
         success {
-            echo "✅ App is live at http://${env.EC2_PUBLIC_IP}:3000"
+            echo "✅ SUCCESS: App live at http://${env.EC2_PUBLIC_IP}:3000"
         }
         always {
             sh "docker rmi ${FULL_IMAGE} || true"
