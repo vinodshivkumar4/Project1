@@ -19,18 +19,22 @@ resource "tls_private_key" "node_app_key" {
 
 resource "aws_security_group" "node_app_sg" {
   name        = "nodejs-app-sg"
+  description = "Allow SSH and App Port"
+
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
   ingress {
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -44,6 +48,11 @@ resource "aws_instance" "node_app_server" {
   instance_type          = var.instance_type
   key_name               = aws_key_pair.generated_key.key_name
   vpc_security_group_ids = [aws_security_group.node_app_sg.id]
-  user_data = file("${path.module}/../script/install_docker.sh")
-  tags = { Name = "nodejs-devops-server" }
+
+  # UPDATED PATH LOGIC: Using abspath to avoid Jenkins directory errors
+  user_data = file(abspath("${path.module}/../script/install_docker.sh"))
+
+  tags = {
+    Name = "nodejs-devops-server"
+  }
 }
