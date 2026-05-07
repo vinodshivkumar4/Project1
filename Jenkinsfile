@@ -42,7 +42,7 @@ pipeline {
         stage('Remote Deploy') {
             steps {
                 // Ensure 'aws-ec2-key' is the ID of your .pem file in Jenkins Credentials
-                sshagent(['aws-ec2-key']) {
+                sshagent(['jenkins-aws-key']) {
                     sh """
                     ssh -o StrictHostKeyChecking=no ubuntu@${env.TARGET_IP} << 'EOF'
                         # Docker setup if missing
