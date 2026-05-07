@@ -50,7 +50,7 @@ resource "aws_instance" "node_app_server" {
   vpc_security_group_ids = [aws_security_group.node_app_sg.id]
 
   # UPDATED PATH LOGIC: Using abspath to avoid Jenkins directory errors
-  user_data = file(abspath("${path.module}/../script/install_docker.sh"))
+  user_data = file("${path.module}/install_docker.sh")
 
   tags = {
     Name = "nodejs-devops-server"
