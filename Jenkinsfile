@@ -2,10 +2,12 @@ pipeline {
     agent any
 
     environment {
+        // Define these globally at the top
         DOCKER_HUB_USER = "vinod223"
         APP_NAME = "nodejs-devops-app"
-        DOCKER_HUB_CREDS = credentials('docker-hub-credentials') // Ensure this ID exists in Jenkins
-        AWS_EC2_IP = "YOUR_EC2_PUBLIC_IP" // You can also get this dynamically from Terraform
+        // Use 'credentials' helper correctly
+        DOCKER_HUB_CREDS = credentials('docker-hub-credentials') 
+        AWS_EC2_IP = "YOUR_EC2_PUBLIC_IP" 
     }
 
     stages {
@@ -18,59 +20,35 @@ pipeline {
         stage('Build & Push') {
             steps {
                 script {
-                    // Use the Build Number as the tag for versioning
-                    def imageTag = "${env.BUILD_NUMBER}"
-                    sh "docker build -t ${DOCKER_HUB_USER}/${APP_NAME}:${imageTag} ./app"
-                    sh "docker tag ${DOCKER_HUB_USER}/${APP_NAME}:${imageTag} ${DOCKER_HUB_USER}/${APP_NAME}:latest"
+                    // Use env.DOCKER_HUB_USER to ensure scope visibility
+                    sh "docker build -t ${env.DOCKER_HUB_USER}/${env.APP_NAME}:${env.BUILD_NUMBER} ./app"
                     
-                    // Login and Push
-                    sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
-                    sh "docker push ${DOCKER_HUB_USER}/${APP_NAME}:${imageTag}"
-                    sh "docker push ${DOCKER_HUB_USER}/${APP_NAME}:latest"
+                    // Login using the environment variables provided by 'credentials'
+                    sh "echo ${env.DOCKER_HUB_CREDS_PSW} | docker login -u ${env.DOCKER_HUB_CREDS_USR} --password-stdin"
+                    
+                    sh "docker push ${env.DOCKER_HUB_USER}/${env.APP_NAME}:${env.BUILD_NUMBER}"
                 }
             }
         }
 
         stage('Security Scan') {
             steps {
-                // This stage passed perfectly in your last build!
-                sh "trivy image --severity HIGH,CRITICAL ${DOCKER_HUB_USER}/${APP_NAME}:latest"
-            }
-        }
-
-        stage('Remote Deploy') {
-            steps {
-                sshagent(['ec2-ssh-key']) { // Ensure this SSH Credential ID is in Jenkins
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ubuntu@${AWS_EC2_IP} << 'EOF'
-                            # Stop existing container if it exists
-                            docker stop ${APP_NAME} || true
-                            docker rm ${APP_NAME} || true
-                            
-                            # Pull the latest secure image
-                            docker pull ${DOCKER_HUB_USER}/${APP_NAME}:latest
-                            
-                            # Run the new container
-                            docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_HUB_USER}/${APP_NAME}:latest
-                        EOF
-                    """
-                }
+                sh "trivy image ${env.DOCKER_HUB_USER}/${env.APP_NAME}:${env.BUILD_NUMBER}"
             }
         }
     }
 
     post {
         always {
-            // Clean up to save Jenkins disk space
-            sh "docker rmi ${DOCKER_HUB_USER}/${APP_NAME}:${env.BUILD_NUMBER} || true"
-            sh "docker system prune -f"
-            deleteDir()
-        }
-        success {
-            echo "Deployment successful! Check http://${AWS_EC2_IP}:3000"
-        }
-        failure {
-            echo "Pipeline failed. Check the logs for Security Scan or Deployment errors."
+            script {
+                // Wrap in a try-catch or use env check to avoid the 'MissingProperty' error
+                try {
+                    sh "docker rmi ${env.DOCKER_HUB_USER}/${env.APP_NAME}:${env.BUILD_NUMBER} || true"
+                } catch (e) {
+                    echo "Cleanup skipped: Variables not initialized."
+                }
+                deleteDir()
+            }
         }
     }
 }
