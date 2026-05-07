@@ -1,64 +1,58 @@
 pipeline {
     agent any
-    
+
     environment {
+        DOCKER_HUB_USER = "vinod223"
         APP_NAME = "nodejs-devops-app"
-        REGISTRY_USER = "vinod223" 
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
-        FULL_IMAGE = "${REGISTRY_USER}/${APP_NAME}:${IMAGE_TAG}"
-        // Replace this with your Terraform EC2 Public IP
-        TARGET_IP = "3.x.x.x" 
-        DOCKER_HUB_CREDS = credentials('docker-hub-creds')
+        DOCKER_HUB_CREDS = credentials('docker-hub-credentials') // Ensure this ID exists in Jenkins
+        AWS_EC2_IP = "YOUR_EC2_PUBLIC_IP" // You can also get this dynamically from Terraform
     }
 
     stages {
         stage('Clone Code') {
             steps {
-                checkout scm
+                git branch: 'master', url: 'https://github.com/vinodshivkumar4/Project1.git'
             }
         }
 
         stage('Build & Push') {
             steps {
-                sh "docker build -t ${FULL_IMAGE} ./app"
-                sh "docker tag ${FULL_IMAGE} ${REGISTRY_USER}/${APP_NAME}:latest"
-                
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
-                    sh "echo \$PASS | docker login -u \$USER --password-stdin"
-                    sh "docker push ${FULL_IMAGE}"
-                    sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
+                script {
+                    // Use the Build Number as the tag for versioning
+                    def imageTag = "${env.BUILD_NUMBER}"
+                    sh "docker build -t ${DOCKER_HUB_USER}/${APP_NAME}:${imageTag} ./app"
+                    sh "docker tag ${DOCKER_HUB_USER}/${APP_NAME}:${imageTag} ${DOCKER_HUB_USER}/${APP_NAME}:latest"
+                    
+                    // Login and Push
+                    sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
+                    sh "docker push ${DOCKER_HUB_USER}/${APP_NAME}:${imageTag}"
+                    sh "docker push ${DOCKER_HUB_USER}/${APP_NAME}:latest"
                 }
             }
         }
 
         stage('Security Scan') {
             steps {
-                sh "trivy image ${FULL_IMAGE} || true"
+                // This stage passed perfectly in your last build!
+                sh "trivy image --severity HIGH,CRITICAL ${DOCKER_HUB_USER}/${APP_NAME}:latest"
             }
         }
 
         stage('Remote Deploy') {
             steps {
-                // 'aws-ec2-key' is the ID you gave your .pem key in Jenkins Credentials
-                sshagent(['aws-ec2-key']) {
+                sshagent(['ec2-ssh-key']) { // Ensure this SSH Credential ID is in Jenkins
                     sh """
-                    ssh -o StrictHostKeyChecking=no ubuntu@${TARGET_IP} << 'EOF'
-                        # Install Docker on the new EC2 if it's not there
-                        if ! command -v docker &> /dev/null; then
-                            sudo apt-get update && sudo apt-get install -y docker.io
-                            sudo systemctl start docker
-                            sudo usermod -aG docker ubuntu
-                        fi
-                        
-                        # Login and Pull
-                        echo "${DOCKER_HUB_CREDS_PSW}" | sudo docker login -u "${DOCKER_HUB_CREDS_USR}" --password-stdin
-                        sudo docker pull ${REGISTRY_USER}/${APP_NAME}:latest
-                        
-                        # Stop and Replace Container
-                        sudo docker stop nodejs_app || true
-                        sudo docker rm nodejs_app || true
-                        sudo docker run -d --name nodejs_app -p 3000:3000 ${REGISTRY_USER}/${APP_NAME}:latest
-                    EOF
+                        ssh -o StrictHostKeyChecking=no ubuntu@${AWS_EC2_IP} << 'EOF'
+                            # Stop existing container if it exists
+                            docker stop ${APP_NAME} || true
+                            docker rm ${APP_NAME} || true
+                            
+                            # Pull the latest secure image
+                            docker pull ${DOCKER_HUB_USER}/${APP_NAME}:latest
+                            
+                            # Run the new container
+                            docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_HUB_USER}/${APP_NAME}:latest
+                        EOF
                     """
                 }
             }
@@ -67,7 +61,16 @@ pipeline {
 
     post {
         always {
-            sh "docker rmi ${FULL_IMAGE} || true"
+            // Clean up to save Jenkins disk space
+            sh "docker rmi ${DOCKER_HUB_USER}/${APP_NAME}:${env.BUILD_NUMBER} || true"
+            sh "docker system prune -f"
+            deleteDir()
+        }
+        success {
+            echo "Deployment successful! Check http://${AWS_EC2_IP}:3000"
+        }
+        failure {
+            echo "Pipeline failed. Check the logs for Security Scan or Deployment errors."
         }
     }
 }
