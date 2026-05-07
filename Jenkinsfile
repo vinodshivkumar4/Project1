@@ -83,7 +83,7 @@ pipeline {
         always {
             // Clean up local images to save space on Jenkins node
             sh "docker rmi ${FULL_IMAGE} || true"
-            sh "docker rmi ${REGISTRY_USER}/${APP_NAME}:latest || true"
+            sh "docker rmi ${REGISTRY_USER}/${APP_NAME}:latest || true
         }
     }
 }
