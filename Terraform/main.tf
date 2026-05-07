@@ -7,15 +7,8 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-resource "aws_key_pair" "generated_key" {
-  key_name   = var.key_name
-  public_key = tls_private_key.node_app_key.public_key_openssh
-}
-
-resource "tls_private_key" "node_app_key" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
+# 1. REMOVED: aws_key_pair.generated_key block
+# 2. REMOVED: tls_private_key.node_app_key block
 
 resource "aws_security_group" "node_app_sg" {
   name        = "nodejs-app-sg"
@@ -46,11 +39,12 @@ resource "aws_security_group" "node_app_sg" {
 resource "aws_instance" "node_app_server" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
-  key_name               = aws_key_pair.generated_key.key_name
+  
+  # 3. UPDATED: Using your existing AWS Key Pair name
+  key_name               = "Jenkins_007" 
+  
   vpc_security_group_ids = [aws_security_group.node_app_sg.id]
-
-  # UPDATED PATH LOGIC: Using abspath to avoid Jenkins directory errors
-  user_data = file("${path.module}/install_docker.sh")
+  user_data              = file("${path.module}/install_docker.sh")
 
   tags = {
     Name = "nodejs-devops-server"
