@@ -20,7 +20,7 @@ pipeline {
 
         stage('Terraform Provisioning') {
             steps {
-                dir('terraform') {
+                dir('Terraform') {
                     // This creates the infrastructure (EC2, SG, etc.) automatically
                     sh "terraform init"
                     sh "terraform apply -auto-approve"
