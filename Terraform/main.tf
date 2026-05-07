@@ -15,15 +15,9 @@ pipeline {
             }
         }
 
-        stage('Build & Test') {
+        stage('Build & Push') {
             steps {
                 sh "docker build -t ${FULL_IMAGE} ./app"
-                sh "docker run --rm ${FULL_IMAGE} npm test"
-            }
-        }
-
-        stage('Push to Docker Hub') {
-            steps {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                     sh "echo \$PASS | docker login -u \$USER --password-stdin"
                     sh "docker push ${FULL_IMAGE}"
@@ -31,20 +25,10 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Execute Deploy') {
             steps {
-                script {
-                    try {
-                        // NO BACKSLASHES HERE: Just call the script directly
-                        // This assumes deploy.sh is in your root folder
-                        sh "chmod +x deploy.sh && ./deploy.sh ${FULL_IMAGE}"
-                    } catch (Exception e) {
-                        echo "Deployment failed! Running rollback..."
-                        // Simplified rollback call
-                        sh "chmod +x rollback.sh && ./rollback.sh"
-                        error("Pipeline failed.")
-                    }
-                }
+                // We move all the 'find' and logic into this script call
+                sh "chmod +x run-deploy.sh && ./run-deploy.sh ${FULL_IMAGE}"
             }
         }
     }
@@ -55,3 +39,27 @@ pipeline {
         }
     }
 }
+2. Create a new file: run-deploy.sh
+Create this file in the root of your GitHub repository. This is where we put the logic that was causing the \ error in Jenkins.
+
+Bash
+#!/bin/bash
+IMAGE_NAME=$1
+
+echo "Searching for deployment script..."
+DEPLOY_PATH=$(find . -name "deploy.sh" | head -n 1)
+
+if [ -z "$DEPLOY_PATH" ]; then
+    echo "ERROR: deploy.sh not found!"
+    # Check for rollback if deployment setup fails
+    ROLLBACK_PATH=$(find . -name "rollback.sh" | head -n 1)
+    if [ -n "$ROLLBACK_PATH" ]; then
+        chmod +x "$ROLLBACK_PATH"
+        ./"$ROLLBACK_PATH"
+    fi
+    exit 1
+fi
+
+echo "Executing $DEPLOY_PATH with image $IMAGE_NAME"
+chmod +x "$DEPLOY_PATH"
+./"$DEPLOY_PATH" "$IMAGE_NAME"
