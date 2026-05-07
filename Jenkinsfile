@@ -6,13 +6,16 @@ pipeline {
         REGISTRY_USER = "vinod223" 
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         FULL_IMAGE = "${env.REGISTRY_USER}/${env.APP_NAME}:${env.IMAGE_TAG}"
-        TARGET_IP = "13.221.217.206" // Verify this is your current EC2 IP
+        // Replace the IP below with your ACTUAL EC2 Public IP from the AWS Console
+        TARGET_IP = "13.221.217.206" 
         DOCKER_HUB_CREDS = credentials('docker-hub-creds')
     }
 
     stages {
         stage('Clone Code') {
-            steps { checkout scm }
+            steps {
+                checkout scm
+            }
         }
 
         stage('Build & Push') {
@@ -36,10 +39,7 @@ pipeline {
                 sshagent(['jenkins-aws-key']) {
                     sh """
                     ssh -o StrictHostKeyChecking=no ubuntu@${env.TARGET_IP} << 'EOF'
-                        # Login to Docker Hub on EC2
                         echo "${env.DOCKER_HUB_CREDS_PSW}" | sudo docker login -u "${env.DOCKER_HUB_CREDS_USR}" --password-stdin
-                        
-                        # Pull and Deploy
                         sudo docker pull ${env.REGISTRY_USER}/${env.APP_NAME}:latest
                         sudo docker stop nodejs_app || true
                         sudo docker rm nodejs_app || true
@@ -49,6 +49,7 @@ EOF
                 }
             }
         }
+    }
 
     post {
         always {
