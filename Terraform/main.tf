@@ -1,5 +1,6 @@
 pipeline {
     agent any
+    
     environment {
         APP_NAME = "nodejs-devops-app"
         REGISTRY_USER = "vinod223" 
@@ -35,7 +36,8 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                     sh "echo \$PASS | docker login -u \$USER --password-stdin"
                     sh "docker push ${FULL_IMAGE}"
-                    // Tag and push as latest for stable tracking
+                    
+                    // Tag and push as latest
                     sh "docker tag ${FULL_IMAGE} ${REGISTRY_USER}/${APP_NAME}:latest"
                     sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
                 }
@@ -46,25 +48,24 @@ pipeline {
             steps {
                 script {
                     try {
-                        sh """
-                            # Find the deploy script regardless of folder name
-                            DEPLOY_PATH=\$(find . -name "deploy.sh" | head -n 1)
-                            if [ -z "\$DEPLOY_PATH" ]; then
+                        // Using ''' (Triple Single Quotes) prevents the '\' error
+                        sh '''
+                            DEPLOY_PATH=$(find . -name "deploy.sh" | head -n 1)
+                            if [ -z "$DEPLOY_PATH" ]; then
                                 echo "ERROR: deploy.sh not found!"
                                 exit 1
                             fi
-                            chmod +x "\$DEPLOY_PATH"
-                            ./"\$DEPLOY_PATH" ${FULL_IMAGE}
-                        """
+                            chmod +x "$DEPLOY_PATH"
+                            ./"$DEPLOY_PATH" ''' + "${FULL_IMAGE}"
                     } catch (Exception e) {
                         echo "Deployment failed! Triggering Rollback logic..."
-                        sh """
-                            ROLLBACK_PATH=\$(find . -name "rollback.sh" | head -n 1)
-                            if [ -n "\$ROLLBACK_PATH" ]; then
-                                chmod +x "\$ROLLBACK_PATH"
-                                ./"\$ROLLBACK_PATH"
+                        sh '''
+                            ROLLBACK_PATH=$(find . -name "rollback.sh" | head -n 1)
+                            if [ -n "$ROLLBACK_PATH" ]; then
+                                chmod +x "$ROLLBACK_PATH"
+                                ./"$ROLLBACK_PATH"
                             fi
-                        """
+                        '''
                         error("Deployment stage failed. Rollback initiated.")
                     }
                 }
@@ -74,14 +75,15 @@ pipeline {
 
     post {
         success {
-            echo "SUCCESS: Pipeline completed successfully."
+            echo "✅ SUCCESS: Pipeline completed successfully."
         }
         failure {
-            echo "FAILURE: Pipeline failed. Check console output for errors."
+            echo "❌ FAILURE: Pipeline failed. Check console output for errors."
         }
         always {
-            // Clean up local images to save space on Jenkins EC2
+            // Clean up local images to save space on Jenkins node
             sh "docker rmi ${FULL_IMAGE} || true"
+            sh "docker rmi ${REGISTRY_USER}/${APP_NAME}:latest || true"
         }
     }
 }
