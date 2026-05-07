@@ -46,6 +46,6 @@ resource "aws_instance" "node_app_server" {
   tags = {
     Name        = "nodejs-devops-server"
     Application = "NodeJS-App"
-    ManagedBy   = "Terraform"
+    ManagedBy   = "Terraform
   }
 }
