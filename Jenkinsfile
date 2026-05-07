@@ -8,24 +8,36 @@ pipeline {
     }
 
     stages {
+        stage('Clone Code') {
+            steps {
+                checkout scm
+            }
+        }
+
         stage('Build & Test') {
             steps {
                 sh "docker build -t ${FULL_IMAGE} ./app"
+                // Run tests inside the newly built container
                 sh "docker run --rm ${FULL_IMAGE} npm test"
             }
         }
 
         stage('Security Scan') {
             steps {
+                echo 'Running Trivy Vulnerability Scan...'
+                // Using '|| true' ensures the pipeline continues even if vulnerabilities are found
                 sh "trivy image ${FULL_IMAGE} || true"
             }
         }
 
-        stage('Push') {
+        stage('Push to Docker Hub') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                     sh "echo \$PASS | docker login -u \$USER --password-stdin"
                     sh "docker push ${FULL_IMAGE}"
+                    // Tag and push as latest for stable tracking
+                    sh "docker tag ${FULL_IMAGE} ${REGISTRY_USER}/${APP_NAME}:latest"
+                    sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
                 }
             }
         }
@@ -34,13 +46,26 @@ pipeline {
             steps {
                 script {
                     try {
-                        sh "find . -name 'deploy.sh' -exec chmod +x {} +"
-                        sh "find . -name 'deploy.sh' -exec {} ${FULL_IMAGE} \;"
+                        sh """
+                            # Find the deploy script regardless of folder name
+                            DEPLOY_PATH=\$(find . -name "deploy.sh" | head -n 1)
+                            if [ -z "\$DEPLOY_PATH" ]; then
+                                echo "ERROR: deploy.sh not found!"
+                                exit 1
+                            fi
+                            chmod +x "\$DEPLOY_PATH"
+                            ./"\$DEPLOY_PATH" ${FULL_IMAGE}
+                        """
                     } catch (Exception e) {
-                        echo "Deployment failed! Triggering Rollback script..."
-                        sh "find . -name 'rollback.sh' -exec chmod +x {} +"
-                        sh "find . -name 'rollback.sh' -exec {} \;"
-                        error("Deployment failed, but system was rolled back.")
+                        echo "Deployment failed! Triggering Rollback logic..."
+                        sh """
+                            ROLLBACK_PATH=\$(find . -name "rollback.sh" | head -n 1)
+                            if [ -n "\$ROLLBACK_PATH" ]; then
+                                chmod +x "\$ROLLBACK_PATH"
+                                ./"\$ROLLBACK_PATH"
+                            fi
+                        """
+                        error("Deployment stage failed. Rollback initiated.")
                     }
                 }
             }
@@ -49,11 +74,14 @@ pipeline {
 
     post {
         success {
-            echo "SUCCESS: Node.js App is live. Sending notification..."
-            // In a real prod environment, you'd use: slackSend channel: '#devops', message: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
+            echo "SUCCESS: Pipeline completed successfully."
         }
         failure {
-            echo "FAILURE: Pipeline failed. Check Trivy or Deploy logs."
+            echo "FAILURE: Pipeline failed. Check console output for errors."
+        }
+        always {
+            // Clean up local images to save space on Jenkins EC2
+            sh "docker rmi ${FULL_IMAGE} || true"
         }
     }
 }
