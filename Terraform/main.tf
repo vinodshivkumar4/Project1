@@ -1,3 +1,13 @@
+# Fetch the latest Ubuntu 22.04 AMI
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+}
+
 resource "aws_key_pair" "generated_key" {
   key_name   = var.key_name
   public_key = tls_private_key.node_app_key.public_key_openssh
@@ -20,7 +30,7 @@ resource "aws_security_group" "node_app_sg" {
   }
 
   ingress {
-    from_port   = 3000 # Your Node.js App Port
+    from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
@@ -35,12 +45,12 @@ resource "aws_security_group" "node_app_sg" {
 }
 
 resource "aws_instance" "node_app_server" {
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = var.instance_type
-  key_name      = aws_key_pair.generated_key.key_name
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
+  key_name               = aws_key_pair.generated_key.key_name
   vpc_security_group_ids = [aws_security_group.node_app_sg.id]
 
-  # Production Best Practice: Using a dedicated shell script for user_data
+  # Make sure this script exists in your terraform/scripts/ directory
   user_data = file("${path.module}/scripts/install_docker.sh")
 
   tags = {
