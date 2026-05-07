@@ -1,71 +1,205 @@
 pipeline {
+
     agent any
-    
+
     environment {
+
+        // App Details
+
         APP_NAME = "nodejs-devops-app"
-        REGISTRY_USER = "vinod223" 
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
+
+        REGISTRY_USER = "vinod223"
+
+        IMAGE_TAG = "${env.BUILD_NUMBER}"give updated
+
         FULL_IMAGE = "${REGISTRY_USER}/${APP_NAME}:${IMAGE_TAG}"
-        SSH_CRED_ID = 'jenkins-aws-key' 
+
+       
+
+        // AWS Details (Change region if your S3/DynamoDB are elsewhere)
+
+        AWS_REGION = "us-east-1"
+
     }
+
+
 
     stages {
+
         stage('Checkout') {
+
             steps {
+
                 checkout scm
+
             }
+
         }
+
+
 
         stage('Terraform Provisioning') {
+
             steps {
+
                 dir('Terraform') {
+
+                    // This creates the infrastructure (EC2, SG, etc.) automatically
+
                     sh "terraform init"
+
                     sh "terraform apply -auto-approve"
-                    script {
-                        // Using double quotes for standard sh is safe for simple output capture
-                        env.EC2_PUBLIC_IP = sh(script: "terraform output -raw public_ip", returnStdout: true).trim()
-                    }
+
                 }
+
             }
+
         }
 
-        stage('Build & Push') {
+
+
+        stage('Build & Test') {
+
             steps {
+
+                // Build the Docker Image
+
                 sh "docker build -t ${FULL_IMAGE} ./app"
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
-                    sh "echo \$PASS | docker login -u \$USER --password-stdin"
-                    sh "docker push ${FULL_IMAGE}"
-                }
+
+               
+
+                // Run Unit Tests inside the container
+
+                sh "docker run --rm ${FULL_IMAGE} npm test"
+
             }
+
         }
+
+
+
+        stage('Security Scan') {
+
+            steps {
+
+                echo '🔍 Scanning image for vulnerabilities with Trivy...'
+
+                // Continues even if vulnerabilities found, but logs them for Task 4
+
+                sh "trivy image ${FULL_IMAGE} || true"
+
+            }
+
+        }
+
+
+
+        stage('Push to Docker Hub') {
+
+            steps {
+
+                // Use the credentials ID you created in Jenkins
+
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+
+                    sh "echo \$PASS | docker login -u \$USER --password-stdin"
+
+                    sh "docker push ${FULL_IMAGE}"
+
+                   
+
+                    // Also push as 'latest' for the rollback script to use
+
+                    sh "docker tag ${FULL_IMAGE} ${REGISTRY_USER}/${APP_NAME}:latest"
+
+                    sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
+
+                }
+
+            }
+
+        }
+
+
 
         stage('Deploy to EC2') {
+
             steps {
+
                 script {
-                    sshagent([env.SSH_CRED_ID]) {
-                        // REMOVED ALL BACKSLASHES. Just call the script directly.
-                        // Ensure deploy.sh is in your root directory.
-                        sh "chmod +x deploy.sh"
-                        sh "./deploy.sh ${env.EC2_PUBLIC_IP} ${FULL_IMAGE}"
+
+                    try {
+
+                        sh """
+
+                            # Find the deploy script and execute it
+
+                            DEPLOY_PATH=\$(find . -name "deploy.sh" | head -n 1)
+
+                            if [ -z "\$DEPLOY_PATH" ]; then echo "Deploy script not found"; exit 1; fi
+
+                            chmod +x "\$DEPLOY_PATH"
+
+                            ./"\$DEPLOY_PATH" ${FULL_IMAGE}
+
+                        """
+
+                    } catch (Exception e) {
+
+                        echo "❌ Deployment Failed! Triggering Rollback..."
+
+                        sh """
+
+                            # Find and run rollback script if health check fails
+
+                            ROLLBACK_PATH=\$(find . -name "rollback.sh" | head -n 1)
+
+                            if [ -n "\$ROLLBACK_PATH" ]; then
+
+                                chmod +x "\$ROLLBACK_PATH"
+
+                                ./"\$ROLLBACK_PATH"
+
+                            fi
+
+                        """
+
+                        error("Deployment stage failed. System rolled back to stable version.")
+
                     }
+
                 }
+
             }
+
         }
+
     }
 
+
+
     post {
+
         success {
-            echo "✅ SUCCESS: App live at http://${env.EC2_PUBLIC_IP}:3000"
+
+            echo "✅ SUCCESS: Your Node.js app is now live on the Terraform-provisioned EC2!"
+
         }
+
         failure {
-            script {
-                sshagent([env.SSH_CRED_ID]) {
-                    echo "❌ FAILED: Running Rollback..."
-                    // Standardizing rollback call
-                    sh "chmod +x rollback.sh"
-                    sh "./rollback.sh ${env.EC2_PUBLIC_IP}"
-                }
-            }
+
+            echo "❌ FAILURE: Pipeline failed. Check the logs above for errors."
+
         }
+
+        always {
+
+            // Cleanup to save space on your Jenkins EC2
+
+            sh "docker rmi ${FULL_IMAGE} || true"
+
+        }
+
     }
+
 }
