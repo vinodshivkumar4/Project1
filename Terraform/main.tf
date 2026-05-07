@@ -25,41 +25,29 @@ pipeline {
             }
         }
 
-        stage('Execute Deploy') {
+        stage('Deploy') {
             steps {
-                // We move all the 'find' and logic into this script call
-                sh "chmod +x run-deploy.sh && ./run-deploy.sh ${FULL_IMAGE}"
+                script {
+                    try {
+                        // NO BACKSLASHES: Call the script directly from the root folder
+                        sh "chmod +x deploy.sh"
+                        sh "./deploy.sh ${FULL_IMAGE}"
+                    } catch (Exception e) {
+                        echo "Deployment failed! Running rollback..."
+                        // Simplified rollback call
+                        sh "chmod +x rollback.sh"
+                        sh "./rollback.sh"
+                        error("Deployment failed, rollback executed.")
+                    }
+                }
             }
         }
     }
 
     post {
         always {
+            // Cleanup local images
             sh "docker rmi ${FULL_IMAGE} || true"
         }
     }
 }
-2. Create a new file: run-deploy.sh
-Create this file in the root of your GitHub repository. This is where we put the logic that was causing the \ error in Jenkins.
-
-Bash
-#!/bin/bash
-IMAGE_NAME=$1
-
-echo "Searching for deployment script..."
-DEPLOY_PATH=$(find . -name "deploy.sh" | head -n 1)
-
-if [ -z "$DEPLOY_PATH" ]; then
-    echo "ERROR: deploy.sh not found!"
-    # Check for rollback if deployment setup fails
-    ROLLBACK_PATH=$(find . -name "rollback.sh" | head -n 1)
-    if [ -n "$ROLLBACK_PATH" ]; then
-        chmod +x "$ROLLBACK_PATH"
-        ./"$ROLLBACK_PATH"
-    fi
-    exit 1
-fi
-
-echo "Executing $DEPLOY_PATH with image $IMAGE_NAME"
-chmod +x "$DEPLOY_PATH"
-./"$DEPLOY_PATH" "$IMAGE_NAME"
