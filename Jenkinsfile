@@ -8,31 +8,20 @@ pipeline {
     }
 
     stages {
-        stage('Clone Code') {
-            steps { checkout scm }
-        }
-
-        stage('Build') {
+        stage('Build & Test') {
             steps {
                 sh "docker build -t ${FULL_IMAGE} ./app"
-                sh "docker tag ${FULL_IMAGE} ${APP_NAME}:latest"
-            }
-        }
-
-        stage('Test') {
-            steps {
                 sh "docker run --rm ${FULL_IMAGE} npm test"
             }
         }
 
         stage('Security Scan') {
             steps {
-                // Now that Trivy is in /usr/bin, this will work
                 sh "trivy image ${FULL_IMAGE} || true"
             }
         }
 
-        stage('Push to Registry') {
+        stage('Push') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                     sh "echo \$PASS | docker login -u \$USER --password-stdin"
@@ -43,24 +32,28 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                sh """
-                    # Finds deploy.sh regardless of if folder is named 'script' or 'scripts'
-                    SCRIPT_PATH=\$(find . -name "deploy.sh" | head -n 1)
-                    if [ -z "\$SCRIPT_PATH" ]; then
-                        echo "ERROR: deploy.sh not found"
-                        exit 1
-                    fi
-                    chmod +x "\$SCRIPT_PATH"
-                    bash "\$SCRIPT_PATH" ${FULL_IMAGE}
-                """
+                script {
+                    try {
+                        sh "find . -name 'deploy.sh' -exec chmod +x {} +"
+                        sh "find . -name 'deploy.sh' -exec {} ${FULL_IMAGE} \;"
+                    } catch (Exception e) {
+                        echo "Deployment failed! Triggering Rollback script..."
+                        sh "find . -name 'rollback.sh' -exec chmod +x {} +"
+                        sh "find . -name 'rollback.sh' -exec {} \;"
+                        error("Deployment failed, but system was rolled back.")
+                    }
+                }
             }
         }
     }
 
     post {
-        always {
-            cleanWs()
-            sh "docker rmi ${FULL_IMAGE} ${APP_NAME}:latest || true"
+        success {
+            echo "SUCCESS: Node.js App is live. Sending notification..."
+            // In a real prod environment, you'd use: slackSend channel: '#devops', message: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
+        }
+        failure {
+            echo "FAILURE: Pipeline failed. Check Trivy or Deploy logs."
         }
     }
 }
