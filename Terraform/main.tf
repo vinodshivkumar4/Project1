@@ -1,85 +1,51 @@
-pipeline {
-    agent any
+resource "aws_key_pair" "generated_key" {
+  key_name   = var.key_name
+  public_key = tls_private_key.node_app_key.public_key_openssh
+}
 
-    environment {
-        APP_NAME = "nodejs-devops-app"
-        REGISTRY_USER = "vinod223"
-        IMAGE_TAG = "${BUILD_NUMBER}"
-        FULL_IMAGE = "${REGISTRY_USER}/${APP_NAME}:${IMAGE_TAG}"
-    }
+resource "tls_private_key" "node_app_key" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
 
-    stages {
+resource "aws_security_group" "node_app_sg" {
+  name        = "nodejs-app-sg"
+  description = "Allow SSH and Node.js App Traffic"
 
-        stage('Clone Code') {
-            steps {
-                checkout scm
-            }
-        }
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-        stage('Build Docker Image') {
-            steps {
-                sh "docker build -t ${FULL_IMAGE} ./app"
-            }
-        }
+  ingress {
+    from_port   = 3000 # Your Node.js App Port
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-        stage('Push Docker Image') {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'docker-hub-creds',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
 
-                    sh '''
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                    '''
+resource "aws_instance" "node_app_server" {
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  key_name      = aws_key_pair.generated_key.key_name
+  vpc_security_group_ids = [aws_security_group.node_app_sg.id]
 
-                    sh "docker push ${FULL_IMAGE}"
-                }
-            }
-        }
+  # Production Best Practice: Using a dedicated shell script for user_data
+  user_data = file("${path.module}/scripts/install_docker.sh")
 
-        stage('Deploy') {
-            steps {
-
-                sh '''
-                    docker stop nodejs-container || true
-                    docker rm nodejs-container || true
-
-                    docker run -d \
-                      --name nodejs-container \
-                      -p 3000:3000 \
-                      ${FULL_IMAGE}
-                '''
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-
-                sh '''
-                    sleep 15
-
-                    curl -f http://localhost:3000/health
-                '''
-            }
-        }
-    }
-
-    post {
-
-        success {
-            echo 'Deployment Successful'
-        }
-
-        failure {
-            echo 'Pipeline Failed'
-        }
-
-        always {
-            sh "docker logout || true"
-        }
-    }
+  tags = {
+    Name        = "nodejs-devops-server"
+    Application = "NodeJS-App"
+    ManagedBy   = "Terraform"
+  }
 }
