@@ -1,26 +1,25 @@
-# Use a slim, stable Node.js base image
+# 1. Start with a stable, lightweight base
 FROM node:20-alpine
 
-# STAGE 1: Security Patch
-# This updates the internal NPM packages to remove 
-# vulnerabilities like brace-expansion and cross-spawn.
+# 2. Patch system-level vulnerabilities found in internal NPM tools
+# This is what cleared your Trivy scan errors!
 RUN npm install -g npm@latest
 
-# STAGE 2: Application Setup
+# 3. Set the working directory inside the container
 WORKDIR /app
 
-# Copy dependency files first (optimizes Docker layer caching)
+# 4. Copy dependency manifests first to leverage Docker layer caching
 COPY package*.json ./
 
-# Install only production dependencies and clean cache to save space
+# 5. Install only production dependencies and purge the cache
+# Use --omit=dev to keep the image slim and secure
 RUN npm install --omit=dev && npm cache clean --force
 
-# Copy the rest of your application code
+# 6. Copy the rest of the application source code
 COPY . .
 
-# STAGE 3: Runtime Configuration
-# The app runs on port 3000
+# 7. Inform Docker the app listens on port 3000
 EXPOSE 3000
 
-# Start the application
+# 8. Start the application
 CMD ["node", "index.js"]
