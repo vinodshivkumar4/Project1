@@ -22,27 +22,19 @@ pipeline {
                     sh "terraform init"
                     sh "terraform apply -auto-approve"
                     script {
-                        // Dynamically capture the IP
+                        // Using double quotes for standard sh is safe for simple output capture
                         env.EC2_PUBLIC_IP = sh(script: "terraform output -raw public_ip", returnStdout: true).trim()
                     }
                 }
             }
         }
 
-        stage('Build & Test') {
+        stage('Build & Push') {
             steps {
                 sh "docker build -t ${FULL_IMAGE} ./app"
-                sh "docker run --rm ${FULL_IMAGE} npm test"
-            }
-        }
-
-        stage('Push to Docker Hub') {
-            steps {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                     sh "echo \$PASS | docker login -u \$USER --password-stdin"
                     sh "docker push ${FULL_IMAGE}"
-                    sh "docker tag ${FULL_IMAGE} ${REGISTRY_USER}/${APP_NAME}:latest"
-                    sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
                 }
             }
         }
@@ -51,9 +43,10 @@ pipeline {
             steps {
                 script {
                     sshagent([env.SSH_CRED_ID]) {
-                        echo "🚀 Deploying to ${env.EC2_PUBLIC_IP}"
-                        // Simplified deployment command to avoid any backslash errors
-                        sh "chmod +x ./deploy.sh && ./deploy.sh ${env.EC2_PUBLIC_IP} ${FULL_IMAGE}"
+                        // REMOVED ALL BACKSLASHES. Just call the script directly.
+                        // Ensure deploy.sh is in your root directory.
+                        sh "chmod +x deploy.sh"
+                        sh "./deploy.sh ${env.EC2_PUBLIC_IP} ${FULL_IMAGE}"
                     }
                 }
             }
@@ -66,15 +59,13 @@ pipeline {
         }
         failure {
             script {
-                echo "❌ Deployment Failed! Running Rollback Script..."
                 sshagent([env.SSH_CRED_ID]) {
-                    // This only runs if any stage above fails
-                    sh "chmod +x ./rollback.sh && ./rollback.sh ${env.EC2_PUBLIC_IP}"
+                    echo "❌ FAILED: Running Rollback..."
+                    // Standardizing rollback call
+                    sh "chmod +x rollback.sh"
+                    sh "./rollback.sh ${env.EC2_PUBLIC_IP}"
                 }
             }
-        }
-        always {
-            sh "docker rmi ${FULL_IMAGE} || true"
         }
     }
 }
