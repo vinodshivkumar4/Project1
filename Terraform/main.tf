@@ -1,45 +1,72 @@
 pipeline {
     agent any
-    
     environment {
         APP_NAME = "nodejs-devops-app"
         REGISTRY_USER = "vinod223" 
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         FULL_IMAGE = "${REGISTRY_USER}/${APP_NAME}:${IMAGE_TAG}"
-        AWS_REGION = "us-east-1"
     }
 
     stages {
-        stage('Checkout') {
+        stage('Clone Code') {
             steps {
                 checkout scm
             }
         }
 
-        stage('Terraform Provisioning') {
+        stage('Build & Test') {
             steps {
-                dir('Terraform') {
-                    sh "terraform init"
-                    sh "terraform apply -auto-approve"
-                    script {
-                        // This captures the IP from your Terraform output
-                        env.EC2_PUBLIC_IP = sh(script: "terraform output -raw public_ip", returnStdout: true).trim()
-                    }
+                sh "docker build -t ${FULL_IMAGE} ./app"
+                // Run tests inside the newly built container
+                sh "docker run --rm ${FULL_IMAGE} npm test"
+            }
+        }
+
+        stage('Security Scan') {
+            steps {
+                echo 'Running Trivy Vulnerability Scan...'
+                // Using '|| true' ensures the pipeline continues even if vulnerabilities are found
+                sh "trivy image ${FULL_IMAGE} || true"
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+                    sh "echo \$PASS | docker login -u \$USER --password-stdin"
+                    sh "docker push ${FULL_IMAGE}"
+                    // Tag and push as latest for stable tracking
+                    sh "docker tag ${FULL_IMAGE} ${REGISTRY_USER}/${APP_NAME}:latest"
+                    sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
                 }
             }
         }
 
-        stage('Build & Push') {
+        stage('Deploy') {
             steps {
-                // Build the app
-                sh "docker build -t ${FULL_IMAGE} ./app"
-                
-                // Push to Docker Hub
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
-                    sh "echo \$PASS | docker login -u \$USER --password-stdin"
-                    sh "docker push ${FULL_IMAGE}"
-                    sh "docker tag ${FULL_IMAGE} ${REGISTRY_USER}/${APP_NAME}:latest"
-                    sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
+                script {
+                    try {
+                        sh """
+                            # Find the deploy script regardless of folder name
+                            DEPLOY_PATH=\$(find . -name "deploy.sh" | head -n 1)
+                            if [ -z "\$DEPLOY_PATH" ]; then
+                                echo "ERROR: deploy.sh not found!"
+                                exit 1
+                            fi
+                            chmod +x "\$DEPLOY_PATH"
+                            ./"\$DEPLOY_PATH" ${FULL_IMAGE}
+                        """
+                    } catch (Exception e) {
+                        echo "Deployment failed! Triggering Rollback logic..."
+                        sh """
+                            ROLLBACK_PATH=\$(find . -name "rollback.sh" | head -n 1)
+                            if [ -n "\$ROLLBACK_PATH" ]; then
+                                chmod +x "\$ROLLBACK_PATH"
+                                ./"\$ROLLBACK_PATH"
+                            fi
+                        """
+                        error("Deployment stage failed. Rollback initiated.")
+                    }
                 }
             }
         }
@@ -47,16 +74,13 @@ pipeline {
 
     post {
         success {
-            echo "-----------------------------------------------------------"
-            echo "✅ PIPELINE FINISHED SUCCESSFULLY"
-            echo "SERVER IP: ${env.EC2_PUBLIC_IP}"
-            echo "DOCKER IMAGE: ${FULL_IMAGE}"
-            echo "-----------------------------------------------------------"
-            echo "NOW RUN THESE ON YOUR SERVER:"
-            echo "1. sudo docker pull ${FULL_IMAGE}"
-            echo "2. sudo docker run -d -p 3000:3000 --name node-app ${FULL_IMAGE}"
+            echo "SUCCESS: Pipeline completed successfully."
+        }
+        failure {
+            echo "FAILURE: Pipeline failed. Check console output for errors."
         }
         always {
+            // Clean up local images to save space on Jenkins EC2
             sh "docker rmi ${FULL_IMAGE} || true"
         }
     }
