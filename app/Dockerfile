@@ -1,13 +1,10 @@
 FROM node:20-alpine
 
+# Add this line right after FROM to patch the internal NPM vulnerabilities
+RUN npm install -g npm@latest
+
 WORKDIR /app
-
 COPY package*.json ./
-
-RUN npm install --production
-
+RUN npm install --omit=dev
 COPY . .
-
-EXPOSE 3000
-
-CMD ["npm", "start"]
+CMD ["node", "index.js"]
