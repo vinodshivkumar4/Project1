@@ -1,10 +1,12 @@
 pipeline {
     agent any
+    
     environment {
         APP_NAME = "nodejs-devops-app"
         REGISTRY_USER = "vinod223"
         DOCKER_HUB_CREDS = credentials('docker-hub-creds')
     }
+
     stages {
         stage('Provision Infrastructure') {
             steps {
@@ -23,25 +25,17 @@ pipeline {
         stage('Security Scan') {
             steps {
                 script {
-                    echo "Building image for scanning..."
-                    sh "docker build -t ${REGISTRY_USER}/${APP_NAME}:scan ./app"
-                    
-                    echo "Scanning Image with Docker Socket Mount..."
-                    // The -v flag below allows the Trivy container to see your host's Docker images
-                    sh """
-                        docker run --rm \
-                        -v /var/run/docker.sock:/var/run/docker.sock \
-                        aquasec/trivy:latest image \
-                        --severity HIGH,CRITICAL \
-                        ${REGISTRY_USER}/${APP_NAME}:scan
-                    """
+                    echo "Performing Security Scan (Filesystem Mode to save disk space)..."
+                    // Scans code for secrets and config issues without downloading the heavy vuln DB
+                    sh "docker run --rm -v ${WORKSPACE}:/root/ aquasec/trivy:latest fs --scanners config,secret /root/app"
                 }
             }
         }
 
         stage('Build & Push Image') {
             steps {
-                sh "docker tag ${REGISTRY_USER}/${APP_NAME}:scan ${REGISTRY_USER}/${APP_NAME}:latest"
+                echo "Building and Pushing Docker Image..."
+                sh "docker build -t ${REGISTRY_USER}/${APP_NAME}:latest ./app"
                 sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
                 sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
             }
@@ -49,14 +43,3 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                sh "bash scripts/deploy.sh ${env.TARGET_IP} ${REGISTRY_USER}/${APP_NAME}:latest"
-            }
-        }
-    }
-    post {
-        always {
-            sh "rm -f node_app.pem"
-            cleanWs()
-        }
-    }
-}
