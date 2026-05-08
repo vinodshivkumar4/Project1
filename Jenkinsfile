@@ -12,9 +12,9 @@ pipeline {
         stage('Provision Infrastructure') {
             steps {
                 dir('Terraform') {
-                    sh 'terraform init'
-                    sh 'terraform apply -auto-approve'
                     script {
+                        sh 'terraform init'
+                        sh 'terraform apply -auto-approve'
                         env.TARGET_IP = sh(script: "terraform output -raw public_ip", returnStdout: true).trim()
                         sh "terraform output -raw private_key > ../node_app.pem"
                         sh "chmod 400 ../node_app.pem"
@@ -46,16 +46,20 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                echo "Deploying to ${env.TARGET_IP}..."
-                sh "bash scripts/deploy.sh ${env.TARGET_IP} ${REGISTRY_USER}/${APP_NAME}:latest"
+                script {
+                    echo "Deploying to ${env.TARGET_IP}..."
+                    sh "bash scripts/deploy.sh ${env.TARGET_IP} ${REGISTRY_USER}/${APP_NAME}:latest"
+                }
             }
         }
 
         stage('Health Check') {
             steps {
-                echo "Waiting for app to start..."
-                sleep 15
-                sh "curl -f http://${env.TARGET_IP}:3000 || echo 'App is still initializing...'"
+                script {
+                    echo "Waiting for app to start..."
+                    sleep 15
+                    sh "curl -f http://${env.TARGET_IP}:3000 || echo 'App is still initializing...'"
+                }
             }
         }
     }
