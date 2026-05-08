@@ -4,6 +4,7 @@ pipeline {
     environment {
         APP_NAME = "nodejs-devops-app"
         REGISTRY_USER = "vinod223"
+        // Ensure this matches your Jenkins Credentials ID
         DOCKER_HUB_CREDS = credentials('docker-hub-creds')
     }
 
@@ -25,8 +26,8 @@ pipeline {
         stage('Security Scan') {
             steps {
                 script {
-                    echo "Performing Security Scan (Filesystem Mode to save disk space)..."
-                    // Scans code for secrets and config issues without downloading the heavy vuln DB
+                    echo "Performing Security Scan (Filesystem Mode)..."
+                    // Scans code without heavy DB download to save disk space
                     sh "docker run --rm -v ${WORKSPACE}:/root/ aquasec/trivy:latest fs --scanners config,secret /root/app"
                 }
             }
@@ -34,12 +35,37 @@ pipeline {
 
         stage('Build & Push Image') {
             steps {
-                echo "Building and Pushing Docker Image..."
-                sh "docker build -t ${REGISTRY_USER}/${APP_NAME}:latest ./app"
-                sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
-                sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
+                script {
+                    echo "Building and Pushing Docker Image..."
+                    sh "docker build -t ${REGISTRY_USER}/${APP_NAME}:latest ./app"
+                    sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
+                    sh "docker push ${REGISTRY_USER}/${APP_NAME}:latest"
+                }
             }
         }
 
         stage('Deploy') {
             steps {
+                echo "Deploying to ${env.TARGET_IP}..."
+                sh "bash scripts/deploy.sh ${env.TARGET_IP} ${REGISTRY_USER}/${APP_NAME}:latest"
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                echo "Waiting for app to start..."
+                sleep 15
+                sh "curl -f http://${env.TARGET_IP}:3000 || echo 'App is still initializing...'"
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                sh "rm -f node_app.pem"
+                cleanWs()
+            }
+        }
+    }
+}
